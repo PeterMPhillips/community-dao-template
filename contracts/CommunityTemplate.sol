@@ -14,6 +14,8 @@ contract CommunityTemplate is BaseTemplate{
   bytes32 constant internal DOT_VOTING_APP_ID = 0x6bf2b7dbfbb51844d0d6fdc211b014638011261157487ccfef5c2e4fb26b1d7e;
   bytes32 constant internal TOKEN_WRAPPER_APP_ID = 0xdab7adb04b01d9a3f85331236b5ce8f5fdc5eecb1eebefb6129bc7ace10de7bd;
 
+  uint64 constant private DEFAULT_FINANCE_PERIOD = uint64(30 days);
+
   constructor(DAOFactory _daoFactory, ENS _ens, MiniMeTokenFactory _miniMeFactory, IFIFSResolvingRegistrar _aragonID)
     BaseTemplate(_daoFactory, _ens, _miniMeFactory, _aragonID)
     public
@@ -32,9 +34,11 @@ contract CommunityTemplate is BaseTemplate{
     */
     function newInstance(
       string memory _id,
+      address _admin,
       ERC20 _tokenToWrap,
       string memory _wrappedTokenName,
       string memory _wrappedTokenSymbol,
+      uint64 _financePeriod,
       uint64[3] memory _votingSettings,
       uint64[3] memory _dotVotingSettings
     )
@@ -43,8 +47,8 @@ contract CommunityTemplate is BaseTemplate{
       _validateId(_id);
 
       (Kernel dao, ACL acl) = _createDAO();
-      Voting voting = _setupApps(dao, acl, _tokenToWrap, _wrappedTokenName, _wrappedTokenSymbol, _votingSettings, _dotVotingSettings);
-      _transferRootPermissionsFromTemplateAndFinalizeDAO(dao, voting);
+      _setupApps(dao, acl, _tokenToWrap, _admin, _wrappedTokenName, _wrappedTokenSymbol, _financePeriod, _votingSettings, _dotVotingSettings);
+      _transferRootPermissionsFromTemplateAndFinalizeDAO(dao, _admin);
       _registerID(_id, dao);
     }
 
@@ -52,35 +56,42 @@ contract CommunityTemplate is BaseTemplate{
         Kernel _dao,
         ACL _acl,
         ERC20 _tokenToWrap,
+        address _admin,
         string memory _wrappedTokenName,
         string memory _wrappedTokenSymbol,
+        uint64 _financePeriod,
         uint64[3] memory _votingSettings,
         uint64[3] memory _dotVotingSettings
     )
         internal
-        returns (Voting)
     {
+        Vault vault = _installVaultApp(_dao);
+        Finance finance = _installFinanceApp(_dao, vault, _financePeriod == 0 ? DEFAULT_FINANCE_PERIOD : _financePeriod);
         TokenWrapper tokenWrapper = _installTokenWrapperApp(_dao, _tokenToWrap, _wrappedTokenName, _wrappedTokenSymbol);
         Voting voting = _installVotingApp(_dao, tokenWrapper, _votingSettings);
         DotVoting dotVoting = _installDotVotingApp(_dao, tokenWrapper, _dotVotingSettings);
 
-        _setupPermissions(_acl, voting, dotVoting, tokenWrapper);
-
-        return voting;
+        _setupPermissions(_admin, _acl, vault, finance, voting, dotVoting, tokenWrapper);
     }
 
     function _setupPermissions(
+        address _admin,
         ACL _acl,
+        Vault _vault,
+        Finance _finance,
         Voting _voting,
         DotVoting _dotVoting,
         TokenWrapper _tokenWrapper
     )
         internal
     {
-        _createEvmScriptsRegistryPermissions(_acl, _voting, _voting);
-        _createTokenWrapperPermissions(_acl, _tokenWrapper, _voting);
-        _createVotingPermissions(_acl, _voting, _voting, _tokenWrapper, _voting);
-        _createDotVotingPermissions(_acl, _dotVoting, _tokenWrapper, _voting);
+        _createVaultPermissions(_acl, _vault, _finance, _admin);
+        _createFinancePermissions(_acl, _finance, _voting, _admin);
+        _createFinanceCreatePaymentsPermission(_acl, _finance, _voting, _admin);
+        _createEvmScriptsRegistryPermissions(_acl, _voting, _admin);
+        _createTokenWrapperPermissions(_acl, _tokenWrapper, _admin);
+        _createVotingPermissions(_acl, _voting, _admin, _admin, _admin);
+        _createDotVotingPermissions(_acl, _dotVoting, _admin, _admin);
     }
 
     /* VOTING */
